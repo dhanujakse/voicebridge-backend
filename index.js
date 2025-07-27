@@ -1,35 +1,57 @@
-// index.js
-
-// Load our secret keys from the .env file
 require('dotenv').config();
-
-// Import the tools we need
 const express = require('express');
-const bodyParser = require('body-parser');
+const admin = require('firebase-admin');
 
-// Create our web server app
 const app = express();
-app.use(bodyParser.urlencoded({ extended: false }));
+const port = process.env.PORT || 3000;
 
-// This is the endpoint that Twilio will send data to
-// It matches the "/process-call" we put in our Studio Flow
-app.post('/process-call', (req, res) => {
-  console.log('--- A NEW REPORT WAS RECEIVED FROM TWILIO! ---');
-  
-  // Get the data that Twilio sent us from the request body
-  const transcript = req.body.transcript;
-  const caller = req.body.caller;
+// Initialize Firebase
+const serviceAccount = require('./serviceAccountKey.json');
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount)
+});
+const db = admin.firestore();
 
-  // Print the data to our terminal to make sure it's working
-  console.log('Caller:', caller);
-  console.log('Transcript:', transcript);
-  
-  // Send a success response back to Twilio so it knows we received the data
-  res.sendStatus(200);
+// Middleware to parse JSON
+app.use(express.json());
+
+// Main endpoint for Twilio Studio
+app.post('/process-call', async (req, res) => {
+  try {
+    const { case_type, caller_number, recording_url, language, issue_type } = req.body;
+
+    // Simple classification for demo
+    let ngo_target = 'NGO_GENERAL';
+    if (issue_type) {
+      if (issue_type.toLowerCase().includes('water')) ngo_target = 'NGO_WATER';
+      else if (issue_type.toLowerCase().includes('electric')) ngo_target = 'NGO_ELECTRICITY';
+    }
+
+    const report = {
+      case_type: case_type || 'unknown',
+      caller_number: caller_number || 'unknown',
+      language: language || 'unknown',
+      recording_url: recording_url || null,
+      ngo_target: ngo_target,
+      received_at: admin.firestore.FieldValue.serverTimestamp()
+    };
+
+    console.log('Received report:', report);
+
+    await db.collection('voice_reports').add(report);
+
+    res.status(200).json({ success: true, ngo_target });
+  } catch (err) {
+    console.error('Error saving report:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
-// Start the server and listen for connections on port 3000
-const port = 3000;
+// Simple home route
+app.get('/', (req, res) => {
+  res.send('VoiceBridge backend is running.');
+});
+
 app.listen(port, () => {
-  console.log(`Server is running and listening on http://localhost:${port}`);
+  console.log(`Server running at http://localhost:${port}`);
 });
